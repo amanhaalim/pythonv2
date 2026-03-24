@@ -7,6 +7,9 @@ from levels.battlefield import BattlefieldLevel
 
 LEVEL_CLASSES = [SlumLevel, DesertLevel, BeachLevel, BattlefieldLevel]
 
+# Cutscene names that mean "level complete, load next level after this"
+LEVEL_COMPLETE_CUTSCENES = {"slum_complete", "desert_complete", "beach_complete"}
+
 
 class LevelManager:
     def __init__(self, physics, ai_system):
@@ -17,6 +20,7 @@ class LevelManager:
         self._pending_cutscene = None
         self._pending_puzzle = None
         self._next_level_ready = False
+        self._transitioning = False  # prevent double-triggers
 
     def load_level(self, index, player, companion):
         self.current_level_index = index
@@ -26,10 +30,11 @@ class LevelManager:
         self._pending_cutscene = None
         self._pending_puzzle = None
         self._next_level_ready = False
+        self._transitioning = False
         companion.current_level_name = self.current_level.name
 
     def update(self, player, companion, dt):
-        if not self.current_level:
+        if not self.current_level or self._transitioning:
             return None
 
         level = self.current_level
@@ -46,8 +51,7 @@ class LevelManager:
             level.boss.update(dt, player, level.platforms)
             if level.boss.check_player_collision(player):
                 player.take_damage(20)
-            # Missile hits
-            for m in level.boss.missiles:
+            for m in list(level.boss.missiles):
                 mx, my = m["x"], m["y"]
                 if (player.x < mx < player.x + player.width and
                         player.y < my < player.y + player.height):
@@ -56,14 +60,17 @@ class LevelManager:
         # Collectibles
         for item in level.collectibles:
             if not item.collected:
-                if (abs(item.x - player.x) < 24 and abs(item.y - player.y) < 24):
+                if abs(item.x - player.x) < 24 and abs(item.y - player.y) < 24:
                     item.collected = True
                     player.score += 10
 
-        # Interactables
+        # Physics — pass level width to clamp player on both sides
+        self.physics.update(player, level.platforms, level.width)
+
+        # Level logic / interactables
         trigger = level.update(player, companion, dt)
 
-        # Player attack (SPACE near enemy or boss)
+        # Player attack (X or Z near enemy / boss)
         import pygame
         keys = pygame.key.get_pressed()
         if keys[pygame.K_x] or keys[pygame.K_z]:
@@ -77,15 +84,22 @@ class LevelManager:
                         abs(level.boss.y - player.y) < 80):
                     level.boss.take_hit()
                     if not level.boss.alive or level.boss.reveal_cow:
-                        self._pending_cutscene = "boss_cow_reveal"
-                        return "cutscene"
+                        if not self._transitioning:
+                            self._transitioning = True
+                            self._pending_cutscene = "boss_cow_reveal"
+                            return "cutscene"
 
         if trigger == "puzzle":
             self._pending_puzzle = level.get_next_puzzle()
             return "puzzle"
         elif trigger == "cutscene":
-            self._pending_cutscene = level.get_pending_cutscene()
-            return "cutscene"
+            cs = level.get_pending_cutscene()
+            if cs:
+                self._pending_cutscene = cs
+                if cs in LEVEL_COMPLETE_CUTSCENES:
+                    self._next_level_ready = True
+                self._transitioning = True
+                return "cutscene"
         elif trigger == "next_level":
             return "next_level"
         elif trigger == "boss":
@@ -106,3 +120,8 @@ class LevelManager:
     def on_puzzle_complete(self, player, companion, story_engine):
         if self.current_level:
             self.current_level.on_puzzle_complete(player, companion, story_engine)
+
+    def advance_level(self):
+        """Reset transition lock after cutscene ends."""
+        self._next_level_ready = False
+        self._transitioning = False

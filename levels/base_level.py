@@ -111,6 +111,7 @@ class BaseLevel:
                     return "puzzle"
                 elif obj.itype == "exit" and self.exit_unlocked and just_e:
                     obj.activated = True
+                    # Store the cutscene name and signal "cutscene" return
                     self._pending_cutscene = self.name + "_complete"
                     return "cutscene"
                 elif obj.itype == "story" and just_e:
@@ -126,10 +127,10 @@ class BaseLevel:
         player.score += 50
         if self.puzzles_solved >= self.puzzles_needed:
             self.exit_unlocked = True
-            # Unlock exit door
+            # Re-enable exit interactable
             for obj in self.interactables:
                 if obj.itype == "exit":
-                    obj.activated = False  # re-enable
+                    obj.activated = False
             companion.say("The exit is now open! Head to the green door.")
 
     def get_next_puzzle(self):
@@ -143,9 +144,19 @@ class BaseLevel:
         return cs
 
     def _make_ground(self, y=None):
+        """Creates a full-width ground platform."""
         if y is None:
             y = C.GROUND_Y
-        self.platforms.append(Platform(0, y, self.width, 60))
+        # Extend ground slightly beyond level so edges are solid
+        self.platforms.append(Platform(-100, y, self.width + 200, 80))
 
     def _make_platform(self, x, y, w, h=20):
         self.platforms.append(Platform(x, y, w, h))
+
+    def _make_walls(self):
+        """Invisible walls at left and right edges."""
+        wall_h = C.SCREEN_H + 200
+        # Left wall
+        self.platforms.append(Platform(-120, -200, 120, wall_h))
+        # Right wall
+        self.platforms.append(Platform(self.width, -200, 120, wall_h))
